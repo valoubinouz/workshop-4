@@ -7,6 +7,9 @@ export type SendMessageBody = {
   destinationUserId: number;
 };
 
+let lastReceivedMessage: string | null = null;
+let lastSentMessage: string | null = null;
+
 export async function user(userId: number) {
   const _user = express();
   _user.use(express.json());
@@ -16,6 +19,14 @@ export async function user(userId: number) {
    _user.get("/status", (req, res) => {
       res.send('live')
 
+   });
+
+   _user.get("/getLastReceivedMessage", (req, res) => {
+    res.json({result: lastReceivedMessage})
+   });
+
+   _user.get("/getLastSentMessage", (req, res) => {
+    res.json({ result: lastSentMessage})
    });
 
   const server = _user.listen(BASE_USER_PORT + userId, () => {
