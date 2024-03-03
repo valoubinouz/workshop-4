@@ -12,6 +12,8 @@ export type RegisterNodeBody = {
 export type GetNodeRegistryBody = {
   nodes: Node[];
 };
+const registeredNodes: Node[] = [];
+
 
 export async function launchRegistry() {
   const _registry = express();
@@ -21,6 +23,20 @@ export async function launchRegistry() {
   // TODO implement the status route
   _registry.get("/status", (req, res) => {
       res.send('live')
+  });
+
+  _registry.get("/getNodeRegistry", (req: Request, res: Response) => {
+    const nodeRegistry: GetNodeRegistryBody = {
+      nodes: registeredNodes,
+    };
+    res.json(nodeRegistry);
+  });
+
+  _registry.post("/register", async (req: Request<{}, {}, RegisterNodeBody>, res) => {
+    const { nodeId, pubKey } = req.body;
+    const newNode: Node = { nodeId, pubKey };
+    registeredNodes.push(newNode);
+    res.send({ nodeId, pubKey });
   });
 
   const server = _registry.listen(REGISTRY_PORT, () => {
