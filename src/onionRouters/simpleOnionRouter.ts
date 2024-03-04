@@ -1,7 +1,7 @@
 import bodyParser from "body-parser";
 import express from "express";
-import { BASE_ONION_ROUTER_PORT } from "../config";
-import { generateRsaKeyPair, exportPrvKey, exportPubKey } from '../crypto';
+import { BASE_ONION_ROUTER_PORT} from "../config";
+import { generateRsaKeyPair, exportPrvKey, exportPubKey, rsaDecrypt, symDecrypt} from '../crypto';
 import axios from 'axios';
 
 
@@ -11,35 +11,33 @@ export async function simpleOnionRouter(nodeId: number) {
   onionRouter.use(express.json());
   onionRouter.use(bodyParser.json());
 
+
   let lastReceivedEncryptedMessage: string | null = null;
   let lastReceivedDecryptedMessage: string | null = null;
-  let lastMessageDestination: string | null = null;
+  let lastMessageDestination: number | null = null;
 
-  const privateKeys = new Map<number, string>();
-  let publicKey: string | null = null;
-  // Generate a pair of private and public keys for each node when the server starts
-  const { publicKey: generatedPublicKey, privateKey: generatedPrivateKey} = await generateRsaKeyPair();
 
-  publicKey = await exportPubKey(generatedPublicKey);  // exporting the public key in base64 format
-  const exportedPrivateKey = await exportPrvKey(generatedPrivateKey);  // exporting the private key in base64 format
-  privateKeys.set(nodeId, exportedPrivateKey || '');
+  // Generate a pair of private and public keys
+  const { publicKey, privateKey} = await generateRsaKeyPair();
 
-  const registryUrl = "http://localhost:8080";  // Replace with the actual registry URL
+  let publicKb64 = await exportPubKey(publicKey);  // exporting the public key in base64 format
+  let privKb64  = await exportPrvKey(privateKey);  // exporting the private key in base64 format
+  
+  const data = {
+    nodeId,
+    pubKey: publicKb64,
+  };
+
+  const registryUrl = "http://localhost:8080/registerNode";  
   try {
-    await axios.post(`${registryUrl}/register`, { nodeId, pubKey: publicKey});
+    await axios.post(registryUrl, data);
     console.log(`Node ${nodeId} registered successfully on the registry.`);
   } catch (error) {
     console.error(`Error registering node ${nodeId} on the registry`);
   }
 
-  onionRouter.get('/getPrivateKey/:nodeId', (req, res) => {
-    const privateKey = privateKeys.get(nodeId);
-  
-    if (privateKey) {
-      res.send({ result: privateKey });
-    } else {
-      res.status(404).send({ error: 'Node not found' });
-    }
+  onionRouter.get('/getPrivateKey', (req, res) => {
+    res.json({result : privKb64});
   });
 
   // Status Route : 
@@ -60,6 +58,32 @@ export async function simpleOnionRouter(nodeId: number) {
   // Route to get the last message destination
   onionRouter.get("/getLastMessageDestination", (req, res) => {
     res.json({ result: lastMessageDestination });
+  });
+
+  onionRouter.post("/message", async (req, res) => {
+
+    const {message} = req.body; 
+
+    const decryptedKey = await rsaDecrypt(message.slice(0, 344), privateKey);
+    const decryptedMessage = await symDecrypt(decryptedKey, message.slice(344));
+    const nextDestination = parseInt(decryptedMessage.slice(0, 10), 10);
+    const remainingMessage = decryptedMessage.slice(10);
+
+    lastReceivedEncryptedMessage = message; 
+    lastReceivedDecryptedMessage = remainingMessage;
+    lastMessageDestination = nextDestination;
+
+    try {
+      await axios.post(`http://localhost:${nextDestination}/message`, { message: remainingMessage }, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      res.status(200).send("success");
+    } catch (error) {
+      console.error(`Error sending message to the next destination:`);
+      res.status(500).send("error");
+    }
   });
 
   const server = onionRouter.listen(BASE_ONION_ROUTER_PORT + nodeId, () => {
